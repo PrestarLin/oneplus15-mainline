@@ -46,6 +46,17 @@ jobs:
       - name: Build
         run: make -C kernel ARCH=arm64 -j"$(nproc)" Image dtbs
 
+      - name: Bake stock memory map into dtb
+        run: |
+          # Upstream dts ships memory@a0000000 with size 0 (expects the
+          # bootloader to patch it; SfbKernelBoot/mainlinedebug does not).
+          # Zero RAM -> early crash -> device drops into 9008/EDL.
+          # memory-map.txt = the exact usable-RAM segments from the stock
+          # Android fdt (21 segments, verified cell-by-cell).
+          DTB=kernel/arch/arm64/boot/dts/qcom/kaanapali-oneplus-infiniti.dtb
+          fdtput -t x "$DTB" /memory@a0000000 reg $(cat memory-map.txt)
+          echo "memory reg now: $(fdtget -t x "$DTB" /memory@a0000000 reg | head -c 96) ..."
+
       - name: Package
         run: |
           mkdir -p out
