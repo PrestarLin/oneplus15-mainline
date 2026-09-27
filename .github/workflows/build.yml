@@ -1,0 +1,86 @@
+name: build
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNEL_REPO: https://github.com/infiniti-mainline/linux.git
+  KERNEL_BRANCH: eykc/oneplus-15
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone kernel source
+        run: |
+          git clone --depth 1 --branch "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          echo "kernel commit: $(git -C kernel rev-parse HEAD)"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flex bison libssl-dev libelf-dev bc device-tree-compiler
+
+      - name: Configure
+        run: |
+          cp kaanapali.config kernel/arch/arm64/configs/
+          cd kernel
+          make ARCH=arm64 defconfig
+          ./scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/kaanapali.config
+          make ARCH=arm64 olddefconfig
+          grep -E '^CONFIG_DRM_MSM=y|^CONFIG_DRM_PANEL_ONEPLUS15_A0020=y|^CONFIG_SCSI_UFS_QCOM=y|^CONFIG_USB_CONFIGFS=y' .config
+
+      - name: Build
+        run: make -C kernel ARCH=arm64 -j"$(nproc)" Image dtbs
+
+      - name: Package
+        run: |
+          mkdir -p out
+          cp kernel/arch/arm64/boot/Image out/
+          cp kernel/.config out/config
+          find kernel/arch/arm64/boot/dts/qcom -maxdepth 1 -name 'kaanapali*' \( -name '*.dtb' -o -name '*.dtbo' \) -exec cp -v {} out/ \;
+          {
+            echo "kernel: infiniti-mainline/linux branch $KERNEL_BRANCH"
+            echo "kernel-commit: $(git -C kernel rev-parse HEAD)"
+            echo "ci-commit: $GITHUB_SHA"
+            echo "run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "date: $(date -u +%FT%TZ)"
+            echo "runner: $RUNNER_ARCH"
+          } > out/BUILD_INFO.txt
+          tar -C out -czf kaanapali-mainline-build.tar.gz .
+          ls -la out/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaanapali-mainline
+          path: out/
+          retention-days: 30
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mainline-latest
+          name: "kaanapali mainline latest"
+          prerelease: true
+          body: |
+            Rolling build of infiniti-mainline/linux branch `eykc/oneplus-15`
+            for OnePlus 15 (kaanapali), configured with kaanapali.config
+            (DRM panel driver, UFS storage, USB gadget all built in).
+            CI source tree: ${{ github.repository }}@${{ github.sha }}.
+          files: |
+            kaanapali-mainline-build.tar.gz
+            out/*
