@@ -56,6 +56,16 @@ jobs:
           DTB=kernel/arch/arm64/boot/dts/qcom/kaanapali-oneplus-infiniti.dtb
           fdtput -t x "$DTB" /memory@a0000000 reg $(cat memory-map.txt)
           echo "memory reg now: $(fdtget -t x "$DTB" /memory@a0000000 reg | head -c 96) ..."
+          # Upstream dts also ships NO /chosen node. PatchChosen (mainlinedebug/
+          # SfbKernelBoot) requires bootargs + linux,initrd-start/end to all be
+          # present; if missing it fails into the (disabled) file log and boot
+          # silently stops after the span line. Create it with a 1025-byte
+          # bootargs placeholder and zeroed u64 initrd slots.
+          fdtput -c "$DTB" /chosen
+          fdtput -t s "$DTB" /chosen bootargs "$(printf 'a%.0s' $(seq 1024))"
+          fdtput -t x "$DTB" /chosen linux,initrd-start 0 0
+          fdtput -t x "$DTB" /chosen linux,initrd-end 0 0
+          echo "chosen bootargs bytes: $(fdtget "$DTB" /chosen bootargs | wc -c)"
 
       - name: Package
         run: |
